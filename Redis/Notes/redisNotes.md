@@ -22,3 +22,31 @@ https://architecturenotes.co/p/redis
 - Stream
 ## Architectures
 - 
+
+
+# PING (no args) -> PONG
+redis-cli -p 6379 ping
+
+# PING (with message) -> echoes as bulk string
+redis-cli -p 6379 ping "hello"
+
+# ECHO
+redis-cli -p 6379 echo "hi there"
+
+# SET / GET
+redis-cli -p 6379 set foo bar
+redis-cli -p 6379 get foo
+
+# EX seconds
+redis-cli -p 6379 set temp value EX 1
+sleep 2
+redis-cli -p 6379 get temp    # -> (nil)
+
+# PX milliseconds
+redis-cli -p 6379 set t v PX 150
+sleep 1
+redis-cli -p 6379 get t       # -> (nil)
+
+# Errors
+redis-cli -p 6379 get         # wrong arity
+redis-cli -p 6379 foobar      # unknown command
