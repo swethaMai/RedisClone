@@ -1,52 +1,119 @@
+// multi_client.js
+// Spawns multiple concurrent TCP clients to your RESP2 server.
+// Each client runs the same command sequence and prints parsed replies.
+//
+// Usage:
+//   node multi_client.js [numClients] [host] [port]
+// Example:
+//   node multi_client.js 10 127.0.0.1 6379
+
 const net = require("net");
+const { parseFrame, encArray } = require("./resp"); // reuse your RESP encoder/decoder
+
+const numClients = parseInt(process.argv[2] || "5", 10);
+const HOST = process.argv[3] || "127.0.0.1";
+const PORT = parseInt(process.argv[4] || "6379", 10);
 
 function respArray(parts) {
-  // parts: array of strings or Buffers; encodes as RESP Array of Bulk Strings
-  const bulks = parts.map((p) => {
-    const buf = Buffer.isBuffer(p) ? p : Buffer.from(String(p), "utf8");
-    return Buffer.from(`$${buf.length}\r\n`, "utf8")
-      .toString("binary") + buf.toString("binary") + "\r\n";
-  }).join("");
-
-  return Buffer.from(`*${parts.length}\r\n`, "utf8").toString("binary") + bulks;
+  // You can also use encArray(parts), but parts here are strings/Buffers;
+  // encArray will treat strings as bulk by default. Using encArray is simpler:
+  return encArray(parts);
 }
 
 function send(conn, parts) {
   const payload = respArray(parts);
+  // Write as binary to preserve exact payload, like in your current client:
   conn.write(payload, "binary");
 }
 
-const conn = net.createConnection({ host: "127.0.0.1", port: 6379 }, () => {
-  console.log("Connected, sending tests...");
+// Pretty-print a parsed RESP node for terminal output
+function formatNode(node) {
+  switch (node.type) {
+    case "simple": return `+${node.value}`;
+    case "error": return `-${node.value}`;
+    case "integer": return `:${node.value}`;
+    case "bulk": return node.value === null ? `$-1` : `$${node.value.length} "${node.value.toString("utf8")}"`;
+    case "array":
+      if (node.value === null) return `*-1`;
+      return `*${node.value.length} [${node.value.map(formatNode).join(", ")}]`;
+    default:
+      return `<???>`;
+  }
+}
 
-  // PING
-  send(conn, ["PING"]);
+function createClient(id) {
+  return new Promise((resolve, reject) => {
+    const conn = net.createConnection({ host: HOST, port: PORT }, () => {
+      console.log(`[C${id}] Connected`);
+      conn.setNoDelay(true);
+      conn.setKeepAlive(true, 30_000);
 
-  // PING hello
-  send(conn, ["PING", "hello"]);
+      // Use unique keys per client to avoid conflicts
+      const fooKey = `foo:${id}`;
+      const ttlKey = `k:${id}`;
 
-  // ECHO hi there
-  send(conn, ["ECHO", "hi there"]);
+      // Send a sequence of commands without waiting (pipelined)
+      send(conn, ["PING"]);
+      send(conn, ["PING", `hello-from-${id}`]);
+      send(conn, ["ECHO", `hi there (client ${id})`]);
+      send(conn, ["SET", fooKey, `bar-${id}`]);
+      send(conn, ["GET", fooKey]);
+      send(conn, ["SET", ttlKey, `v-${id}`, "EX", "1"]);
+      setTimeout(() => send(conn, ["GET", ttlKey]), 1500); // should be null bulk after TTL
+      // error cases
+      send(conn, ["GET"]);    // wrong arity
+      send(conn, ["FOOBAR"]); // unknown cmd
 
-  // SET foo bar
-  send(conn, ["SET", "foo", "bar"]);
+      // Optional: close after a bit (so the script exits)
+      setTimeout(() => conn.end(), 2500);
+    });
 
-  // GET foo
-  send(conn, ["GET", "foo"]);
+    let buf = Buffer.alloc(0);
 
-  // SET with EX 1
-  send(conn, ["SET", "k", "v", "EX", "1"]);
-  setTimeout(() => send(conn, ["GET", "k"]), 1500); // should return null bulk
+    conn.on("data", (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
 
-  // Error cases
-  send(conn, ["GET"]);          // wrong arity
-  send(conn, ["FOOBAR"]);       // unknown cmd
-});
+      // Drain all complete frames; keep remainder in buf
+      while (true) {
+        const res = parseFrame(buf, 0);
+        if (res.needMore) break;
+        if (res.protocolError) {
+          console.error(`[C${id}] Protocol error: ${res.protocolError}`);
+          conn.end();
+          return;
+        }
+        const node = res.node;
+        const next = res.nextOffset;
+        buf = buf.slice(next);
 
-conn.on("data", (data) => {
-  process.stdout.write("SERVER> " + data.toString("utf8"));
-});
+        console.log(`[C${id}] < ${formatNode(node)}`);
+      }
+    });
 
-conn.on("end", () => console.log("\nServer ended connection."));
-conn.on("close", () => console.log("Connection closed."));
-conn.on("error", (e) => console.error("Client error:", e.message));
+    conn.on("end", () => console.log(`[C${id}] Server ended connection`));
+    conn.on("close", () => {
+      console.log(`[C${id}] Closed`);
+      resolve();
+    });
+    conn.on("error", (e) => {
+      console.error(`[C${id}] Error: ${e.message}`);
+      reject(e);
+    });
+  });
+}
+
+(async () => {
+  console.log(`Spawning ${numClients} clients to ${HOST}:${PORT} ...`);
+  // Stagger starts a bit to avoid thundering herd on connect
+  const jobs = Array.from({ length: numClients }, (_, i) =>
+    new Promise((r) => setTimeout(r, i * 50)).then(() => createClient(i + 1))
+  );
+
+  try {
+    await Promise.allSettled(jobs);
+  } finally {
+    console.log(`All clients done.`);
+    // Give a moment for any final logs to flush
+    setTimeout(() => process.exit(0), 200);
+  }
+})();

@@ -5,6 +5,7 @@
 const { encSimple, encError, encBulk } = require("./resp");
 const storage = require("./storage");
 
+// normalize command name
 function toUpperAscii(bufOrStr) {
   return (Buffer.isBuffer(bufOrStr) ? bufOrStr.toString("utf8") : String(bufOrStr)).toUpperCase();
 }

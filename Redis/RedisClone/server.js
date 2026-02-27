@@ -1,12 +1,9 @@
-// server.js
-// TCP server that speaks RESP2 and dispatches commands.
-// Default port 6379 (override with PORT env var). Compatible with redis-cli.
-
 const net = require("net");
 const { parseFrame, encError } = require("./resp");
 const { handleCommand } = require("./command");
 const storage = require("./storage");
 
+//define environment variables for this process 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 6379;
 const HOST = process.env.HOST || "0.0.0.0";
 
