@@ -1,0 +1,62 @@
+Requirements:
+
+1. Networking
+Create a TCP server (recommended default port: 6379).
+Accept multiple client connections concurrently.
+Continue serving each client for multiple requests.
+
+
+2. Protocol
+Implement enough of the RESP2 protocol to parse client requests and send correct responses:
+Simple Strings
+Errors
+Integers
+Bulk Strings
+Arrays
+Malformed input should return a protocol error.
+
+
+3. Commands
+Your server must correctly implement:
+
+        PING
+No arguments → respond with PONG
+One argument → return it back as a bulk string
+        ECHO \
+Return the message provided
+        SET \ \ [EX seconds] [PX milliseconds]
+Store the key/value
+Support optional TTL via EX or PX
+        GET \
+Return the value if present
+Return a “null bulk” if missing or expired
+
+
+4. Key Storage & TTL
+Store key–value pairs in memory
+Keys with TTL should automatically expire after the specified time
+(lazy expiration is acceptable)
+
+
+5. Error Handling
+Return proper RESP error responses for:
+Wrong number of arguments
+Unknown commands
+Malformed protocol input
+
+
+6. Compatibility
+The server must work with redis-cli for basic manual testing.
+
+
+Expected Output
+A runnable server program.
+The server accepts connections and processes RESP2 commands correctly.
+Commands PING, ECHO, SET, GET work exactly as described.
+TTL works — expired keys behave as nonexistent.
+Errors follow RESP error format.
+Multiple clients can interact simultaneously without issues.
+A short README with:
+How to run the server
+Basic usage examples
+Any assumptions or limitations
